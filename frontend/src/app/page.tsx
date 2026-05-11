@@ -108,6 +108,7 @@ export default function Dashboard() {
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState(false);
   const [qvacReady, setQvacReady] = useState(false);
+  const [loadingPercent, setLoadingPercent] = useState<number | null>(null);
 
   const fetchPrediction = useCallback(async () => {
     try {
@@ -128,9 +129,11 @@ export default function Dashboard() {
       if (res.ok) {
         const data = await res.json();
         setQvacReady(data.model_ready === true);
+        setLoadingPercent(data.loading_percent ?? null);
       }
     } catch {
       setQvacReady(false);
+      setLoadingPercent(null);
     }
   }, []);
 
@@ -210,10 +213,14 @@ export default function Dashboard() {
               {connected ? "ML Service Connected" : "Disconnected"}
             </span>
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ring-1 ${
-              qvacReady ? "bg-amber-500/15 text-amber-400 ring-amber-500/30" : "bg-gray-700/50 text-gray-400 ring-gray-600/30"
+              qvacReady ? "bg-amber-500/15 text-amber-400 ring-amber-500/30"
+                : loadingPercent != null ? "bg-amber-500/15 text-amber-400 ring-amber-500/30"
+                : "bg-gray-700/50 text-gray-400 ring-gray-600/30"
             }`}>
-              <StatusDot active={qvacReady} />
-              {qvacReady ? "QVAC LLM Ready" : "QVAC Demo Mode"}
+              <StatusDot active={qvacReady || loadingPercent != null} />
+              {qvacReady ? "QVAC LLM Ready"
+                : loadingPercent != null ? `Loading Llama 3.2: ${loadingPercent}%`
+                : "QVAC Demo Mode"}
             </span>
           </div>
         </div>
@@ -313,7 +320,21 @@ export default function Dashboard() {
           ML backend disconnected -- run: cd backend && python main.py
         </div>
       )}
-      {connected && !qvacReady && (
+      {connected && !qvacReady && loadingPercent != null && (
+        <div className="fixed bottom-4 left-4 bg-amber-600/90 text-white text-xs px-4 py-3 rounded-lg min-w-[260px]">
+          <div className="flex justify-between mb-1.5">
+            <span>Loading Llama 3.2 1B...</span>
+            <span className="font-mono">{loadingPercent}%</span>
+          </div>
+          <div className="h-1.5 bg-amber-900/50 rounded-full overflow-hidden">
+            <div
+              className="h-full bg-amber-400 rounded-full transition-all duration-500"
+              style={{ width: `${loadingPercent}%` }}
+            />
+          </div>
+        </div>
+      )}
+      {connected && !qvacReady && loadingPercent == null && (
         <div className="fixed bottom-4 left-4 bg-amber-600/90 text-white text-xs px-3 py-2 rounded-lg">
           QVAC in demo mode -- for real LLM: node src/server.js
         </div>
