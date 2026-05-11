@@ -433,6 +433,9 @@ export default function Dashboard() {
             <p className="text-sm text-gray-500 mt-0.5">Sovereign AI Trading Agent</p>
           </div>
           <div className="flex items-center gap-3">
+            <a href="/presentation" className="px-2.5 py-1 rounded-full text-xs font-medium text-gray-400 hover:text-amber-400 ring-1 ring-gray-700 hover:ring-amber-500/30 transition-colors">
+              Pitch
+            </a>
             <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ring-1 ${
               connected ? "bg-emerald-500/15 text-emerald-400 ring-emerald-500/30" : "bg-gray-700/50 text-gray-400 ring-gray-600/30"
             }`}>
