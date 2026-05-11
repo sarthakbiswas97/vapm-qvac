@@ -1,0 +1,13 @@
+{
+  "name": "vapm-qvac",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Sovereign AI Trading Agent - local inference with QVAC, no cloud dependency",
+  "scripts": {
+    "start": "node src/agent.js",
+    "reason": "node src/qvac-reasoner.js"
+  },
+  "dependencies": {
+    "@qvac/sdk": "^0.10.2"
+  }
+}

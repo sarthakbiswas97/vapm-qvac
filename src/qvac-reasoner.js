@@ -1,0 +1,207 @@
+/**
+ * QVAC Trade Reasoner -- Local AI inference for trade decisions.
+ *
+ * Uses QVAC SDK to run a local LLM (Llama 3.2 1B) for:
+ * 1. Explaining WHY the XGBoost model wants to trade (natural language)
+ * 2. Analyzing market conditions from feature data
+ * 3. Generating risk assessment narratives
+ *
+ * Everything runs LOCALLY -- no cloud, no API keys, no data leakage.
+ * This is "sovereign AI" for trading: your strategy never leaves your device.
+ */
+
+import { loadModel, LLAMA_3_2_1B_INST_Q4_0, completion, unloadModel } from "@qvac/sdk";
+
+let modelId = null;
+
+/**
+ * Initialize the local LLM model.
+ * Downloads and loads the model on first run (~700MB).
+ */
+export async function initQVAC() {
+  if (modelId) return modelId;
+
+  console.log("[QVAC] Loading Llama 3.2 1B locally (first run downloads ~700MB)...");
+
+  modelId = await loadModel({
+    modelSrc: LLAMA_3_2_1B_INST_Q4_0,
+    modelType: "llm",
+    onProgress: (progress) => {
+      if (progress.percent && progress.percent % 20 === 0) {
+        console.log(`[QVAC] Loading: ${progress.percent}%`);
+      }
+    },
+  });
+
+  console.log("[QVAC] Model loaded. All inference runs locally.");
+  return modelId;
+}
+
+/**
+ * Generate a trade reasoning explanation from ML prediction data.
+ * Runs entirely on-device via QVAC -- no cloud API calls.
+ *
+ * @param {Object} prediction - ML model output
+ * @param {string} prediction.direction - "UP" or "DOWN"
+ * @param {number} prediction.confidence - 0.0 to 1.0
+ * @param {Object} prediction.shap - SHAP feature importances
+ * @param {Object} prediction.features - Current feature values
+ * @param {Object} riskState - Current risk metrics
+ * @returns {string} Natural language trade reasoning
+ */
+export async function generateTradeReasoning(prediction, riskState) {
+  if (!modelId) await initQVAC();
+
+  const topFeatures = Object.entries(prediction.shap || {})
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+    .slice(0, 5)
+    .map(([name, value]) => `${name}: ${value > 0 ? "+" : ""}${value.toFixed(4)} (pushes ${value > 0 ? "UP" : "DOWN"})`)
+    .join("\n");
+
+  const prompt = `You are a quantitative trading analyst. Explain this AI trading signal concisely in 3-4 sentences.
+
+Signal: ${prediction.direction} with ${(prediction.confidence * 100).toFixed(1)}% confidence
+Top SHAP feature drivers:
+${topFeatures}
+
+Current risk state:
+- Daily PnL: ${(riskState.dailyPnlPct * 100).toFixed(2)}%
+- Drawdown: ${(riskState.drawdownPct * 100).toFixed(2)}%
+- Position exposure: ${(riskState.exposurePct * 100).toFixed(2)}%
+
+Explain why the model recommends ${prediction.direction} and whether the risk state supports this trade.`;
+
+  const history = [{ role: "user", content: prompt }];
+
+  let reasoning = "";
+  const result = completion({ modelId, history, stream: true });
+
+  for await (const token of result.tokenStream) {
+    reasoning += token;
+  }
+
+  return reasoning.trim();
+}
+
+/**
+ * Analyze market conditions and generate a summary.
+ * Uses QVAC local LLM -- no data sent to any server.
+ *
+ * @param {Object} features - Technical indicator values
+ * @returns {string} Market analysis
+ */
+export async function analyzeMarket(features) {
+  if (!modelId) await initQVAC();
+
+  const prompt = `You are a technical analyst. Give a brief 2-3 sentence market assessment based on these indicators:
+
+RSI: ${features.rsi?.toFixed(1) || "N/A"}
+MACD: ${features.macd?.toFixed(4) || "N/A"}
+MACD Signal: ${features.macd_signal?.toFixed(4) || "N/A"}
+Bollinger Position: ${features.bollinger_position?.toFixed(2) || "N/A"}
+Volatility: ${features.volatility?.toFixed(4) || "N/A"}
+Volume Spike: ${features.volume_spike?.toFixed(2) || "N/A"}
+Momentum: ${features.momentum?.toFixed(4) || "N/A"}
+
+Is this a good time to trade? What's the dominant signal?`;
+
+  const history = [{ role: "user", content: prompt }];
+
+  let analysis = "";
+  const result = completion({ modelId, history, stream: true });
+
+  for await (const token of result.tokenStream) {
+    analysis += token;
+  }
+
+  return analysis.trim();
+}
+
+/**
+ * Generate a risk assessment before trade execution.
+ *
+ * @param {Object} tradeParams - Proposed trade parameters
+ * @param {Object} riskLimits - Configured risk limits
+ * @returns {Object} { approved: boolean, reasoning: string }
+ */
+export async function assessRisk(tradeParams, riskLimits) {
+  if (!modelId) await initQVAC();
+
+  const prompt = `You are a risk manager. Should this trade be approved? Answer YES or NO, then explain in 2 sentences.
+
+Proposed trade:
+- Direction: ${tradeParams.direction}
+- Position size: ${tradeParams.positionBps} basis points
+- Confidence: ${(tradeParams.confidence * 100).toFixed(1)}%
+
+Risk limits:
+- Max position: ${riskLimits.maxPositionBps} bps
+- Max daily loss: ${riskLimits.maxDailyLossBps} bps
+- Max drawdown: ${riskLimits.maxDrawdownBps} bps
+
+Current state:
+- Daily PnL: ${tradeParams.dailyPnlBps} bps
+- Drawdown: ${tradeParams.drawdownBps} bps
+
+Does this trade violate any limits? Is the confidence level sufficient?`;
+
+  const history = [{ role: "user", content: prompt }];
+
+  let response = "";
+  const result = completion({ modelId, history, stream: true });
+
+  for await (const token of result.tokenStream) {
+    response += token;
+  }
+
+  const approved = response.toUpperCase().startsWith("YES");
+
+  return { approved, reasoning: response.trim() };
+}
+
+/**
+ * Clean up and unload the model.
+ */
+export async function shutdown() {
+  if (modelId) {
+    await unloadModel({ modelId });
+    modelId = null;
+    console.log("[QVAC] Model unloaded.");
+  }
+}
+
+// CLI test mode
+if (process.argv[1]?.endsWith("qvac-reasoner.js")) {
+  console.log("=== QVAC Trade Reasoner Test ===\n");
+
+  await initQVAC();
+
+  const testPrediction = {
+    direction: "UP",
+    confidence: 0.72,
+    shap: { rsi: -0.12, macd: 0.25, volatility: -0.08, momentum: 0.15, bollinger_position: 0.10 },
+  };
+
+  const testRisk = { dailyPnlPct: -0.01, drawdownPct: 0.02, exposurePct: 0.0 };
+
+  console.log("[Test] Generating trade reasoning...\n");
+  const reasoning = await generateTradeReasoning(testPrediction, testRisk);
+  console.log("Trade Reasoning:");
+  console.log(reasoning);
+
+  console.log("\n[Test] Analyzing market...\n");
+  const analysis = await analyzeMarket({ rsi: 35, macd: 0.002, macd_signal: -0.001, bollinger_position: -0.3, volatility: 0.02, volume_spike: 1.5, momentum: 0.003 });
+  console.log("Market Analysis:");
+  console.log(analysis);
+
+  console.log("\n[Test] Assessing risk...\n");
+  const risk = await assessRisk(
+    { direction: "UP", positionBps: 300, confidence: 0.72, dailyPnlBps: 50, drawdownBps: 100 },
+    { maxPositionBps: 500, maxDailyLossBps: 300, maxDrawdownBps: 1000 }
+  );
+  console.log(`Risk Assessment: ${risk.approved ? "APPROVED" : "REJECTED"}`);
+  console.log(risk.reasoning);
+
+  await shutdown();
+  console.log("\n=== Test Complete ===");
+}
