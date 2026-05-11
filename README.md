@@ -117,10 +117,16 @@ node src/qvac-reasoner.js
 ```
 vapm-qvac/
   src/
-    server.js           -- QVAC HTTP server (exposes LLM inference as API)
+    server.js           -- QVAC HTTP server (LLM + RAG + TTS endpoints)
     agent.js            -- CLI agent orchestrator (one-shot cycle)
-    qvac-reasoner.js    -- QVAC local LLM integration (reasoning, risk, analysis)
+    qvac-reasoner.js    -- QVAC LLM integration (reasoning, risk, analysis)
+    qvac-rag.js         -- QVAC RAG integration (embeddings, knowledge search)
     dune-sim.js         -- Dune SIM wallet data client
+  data/
+    knowledge/          -- Trading knowledge base for RAG
+      trading_rules.txt       -- Position sizing, risk limits, entry/exit rules
+      sol_market_context.txt  -- SOL/USDC market context and technical levels
+      shap_interpretation.txt -- Guide for interpreting SHAP feature values
   frontend/             -- Next.js dashboard (calls QVAC server for live inference)
   backend/
     main.py             -- FastAPI ML prediction service
@@ -143,21 +149,33 @@ GET  /backtest/results   Historical backtest performance
 
 ### QVAC Server (port 8002)
 ```
-GET  /health             Server + model loading status
-POST /api/cycle          Full agent cycle (predict + reason + risk + market)
+GET  /health             Server + model loading + RAG status
+POST /api/cycle          Full agent cycle (predict + RAG search + reason + risk + market)
 POST /api/reason         Trade reasoning from SHAP data (real LLM inference)
 POST /api/risk           Risk assessment for proposed trade (real LLM inference)
 POST /api/market         Market analysis from technical indicators (real LLM inference)
+GET  /api/rag-status     RAG knowledge base status (initialized, file count)
 ```
 
 ## Key QVAC Capabilities Used
 
-| Capability | Package | Usage |
-|------------|---------|-------|
-| Model Loading | `loadModel` (via `@qvac/sdk`) | Load quantized Llama 3.2 with progress tracking |
+| Capability | SDK Function | Usage |
+|------------|-------------|-------|
+| LLM Loading | `loadModel` (Llama 3.2 1B Q4_0) | Load quantized LLM with progress tracking |
 | LLM Inference | `completion({ stream: true })` | Streaming token generation for reasoning |
+| Embeddings | `loadModel` (EmbeddingGemma 300M Q4_0) | Load embedding model for RAG |
+| RAG Chunking | `ragChunk` | Split knowledge documents into indexed chunks |
+| RAG Ingestion | `ragIngest` | Embed and index chunks into local workspace |
+| RAG Search | `ragSearch` | Retrieve relevant context before LLM inference |
 | Model Lifecycle | `unloadModel` | Clean shutdown of GPU resources |
-| Local Cache | `~/.qvac/models/` | One-time download, instant reload |
+
+### How RAG Works
+
+The agent maintains a local knowledge base (`data/knowledge/`) containing trading rules, risk guidelines, SOL market context, and SHAP interpretation guides. On startup, these documents are chunked, embedded using EmbeddingGemma 300M, and indexed into a QVAC RAG workspace.
+
+Before each trade reasoning call, the agent searches the knowledge base with a query derived from the current prediction and top SHAP features. Retrieved context is prepended to the LLM prompt, making the reasoning informed by domain expertise -- not just raw SHAP numbers.
+
+All embedding and retrieval runs locally. No external search API. No cloud vector database.
 
 ## Why Local AI Matters for Trading
 
