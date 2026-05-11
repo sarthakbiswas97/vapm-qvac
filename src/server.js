@@ -13,10 +13,13 @@
  *   POST /api/reason      - Trade reasoning only
  *   POST /api/risk        - Risk assessment only
  *   POST /api/market      - Market analysis only
+ *   POST /api/speak       - Text-to-speech (returns WAV audio)
  */
 
 import { createServer } from "node:http";
 import { initQVAC, generateTradeReasoning, analyzeMarket, assessRisk, shutdown, getLoadingProgress } from "./qvac-reasoner.js";
+import { initRAG, searchContext, shutdownRAG, isRAGReady, getKnowledgeFileCount } from "./qvac-rag.js";
+import { initTTS, speak, shutdownTTS } from "./qvac-tts.js";
 
 const PORT = parseInt(process.env.QVAC_PORT || "8002", 10);
 const ML_SERVICE = process.env.ML_SERVICE_URL || "http://localhost:8001";
@@ -79,6 +82,24 @@ async function handleCycle(req, res) {
   const featData = await fetchFromML("/features/latest");
   const features = featData?.features || {};
 
+  // Retrieve RAG context before LLM inference
+  let ragContext = "";
+  let ragEnhanced = false;
+  if (isRAGReady()) {
+    try {
+      const topFeatureNames = Object.entries(prediction.shap_explanation || {})
+        .sort((a, b) => Math.abs(b[1]?.value ?? b[1]) - Math.abs(a[1]?.value ?? a[1]))
+        .slice(0, 2)
+        .map(([name]) => name)
+        .join(" and ");
+      const query = `${prediction.direction} signal with ${topFeatureNames} drivers for SOL/USDC trading`;
+      ragContext = await searchContext(query);
+      ragEnhanced = !!ragContext;
+    } catch (err) {
+      console.error("[QVAC RAG] Context retrieval failed:", err.message);
+    }
+  }
+
   const [reasoning, riskAssessment, marketAnalysis] = await Promise.all([
     generateTradeReasoning(
       {
@@ -87,6 +108,7 @@ async function handleCycle(req, res) {
         shap: prediction.shap_explanation || {},
       },
       riskState,
+      ragContext || null,
     ),
     assessRisk(
       {
@@ -110,6 +132,7 @@ async function handleCycle(req, res) {
     reasoning,
     riskAssessment,
     marketAnalysis,
+    ragEnhanced,
     timestamp: new Date().toISOString(),
     source: "qvac-local-llm",
   });
@@ -136,6 +159,32 @@ async function handleMarket(req, res) {
   jsonResponse(res, 200, { analysis: result });
 }
 
+async function handleSpeak(req, res) {
+  const body = await readBody(req);
+  const text = body.text;
+  if (!text || typeof text !== "string" || text.trim().length === 0) {
+    return jsonResponse(res, 400, { error: "Missing or empty 'text' field" });
+  }
+
+  // Cap input length to avoid excessively long synthesis
+  const trimmedText = text.slice(0, 2000);
+
+  try {
+    const wavBuffer = await speak(trimmedText);
+    res.writeHead(200, {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Content-Type": "audio/wav",
+      "Content-Length": wavBuffer.length,
+    });
+    res.end(wavBuffer);
+  } catch (err) {
+    console.error("[QVAC TTS] Synthesis error:", err.message);
+    jsonResponse(res, 500, { error: `TTS synthesis failed: ${err.message}` });
+  }
+}
+
 const server = createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
     res.writeHead(204, corsHeaders());
@@ -146,7 +195,13 @@ const server = createServer(async (req, res) => {
 
   try {
     if (url.pathname === "/health" && req.method === "GET") {
-      return jsonResponse(res, 200, { status: "ok", model_ready: modelReady, loading_percent: getLoadingProgress() });
+      return jsonResponse(res, 200, { status: "ok", model_ready: modelReady, rag_ready: isRAGReady(), loading_percent: getLoadingProgress() });
+    }
+    if (url.pathname === "/api/rag-status" && req.method === "GET") {
+      return jsonResponse(res, 200, {
+        initialized: isRAGReady(),
+        knowledgeFiles: getKnowledgeFileCount(),
+      });
     }
     if (url.pathname === "/api/cycle" && req.method === "POST") {
       return await handleCycle(req, res);
@@ -159,6 +214,9 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === "/api/market" && req.method === "POST") {
       return await handleMarket(req, res);
+    }
+    if (url.pathname === "/api/speak" && req.method === "POST") {
+      return await handleSpeak(req, res);
     }
     jsonResponse(res, 404, { error: "Not found" });
   } catch (err) {
@@ -173,6 +231,15 @@ async function start() {
   modelReady = true;
   console.log("[QVAC Server] Model ready. All inference runs on-device.");
 
+  console.log("[QVAC Server] Initializing RAG knowledge base...");
+  await initRAG();
+  console.log("[QVAC Server] RAG ready. Knowledge base loaded.");
+
+  // TTS loads lazily on first /api/speak request to avoid blocking startup.
+  // Optionally pre-load by uncommenting the next two lines:
+  // console.log("[QVAC Server] Pre-loading TTS model...");
+  // await initTTS();
+
   server.listen(PORT, () => {
     console.log(`[QVAC Server] Listening on http://localhost:${PORT}`);
     console.log(`[QVAC Server] ML service expected at ${ML_SERVICE}`);
@@ -181,6 +248,8 @@ async function start() {
 
 process.on("SIGINT", async () => {
   console.log("\n[QVAC Server] Shutting down...");
+  await shutdownTTS();
+  await shutdownRAG();
   await shutdown();
   server.close();
   process.exit(0);

@@ -14,6 +14,7 @@ import { loadModel, LLAMA_3_2_1B_INST_Q4_0, completion, unloadModel } from "@qva
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { searchContext } from "./qvac-rag.js";
 
 let modelId = null;
 let loadingPercent = null;
@@ -64,7 +65,7 @@ export async function initQVAC() {
  * @param {Object} riskState - Current risk metrics
  * @returns {string} Natural language trade reasoning
  */
-export async function generateTradeReasoning(prediction, riskState) {
+export async function generateTradeReasoning(prediction, riskState, ragContext = null) {
   if (!modelId) await initQVAC();
 
   const topFeatures = Object.entries(prediction.shap || {})
@@ -73,8 +74,29 @@ export async function generateTradeReasoning(prediction, riskState) {
     .map(([name, value]) => `${name}: ${value > 0 ? "+" : ""}${value.toFixed(4)} (pushes ${value > 0 ? "UP" : "DOWN"})`)
     .join("\n");
 
-  const prompt = `You are a quantitative trading analyst. Explain this AI trading signal concisely in 3-4 sentences.
+  // Build RAG context: use provided context or fetch dynamically
+  let retrievedContext = ragContext;
+  if (!retrievedContext) {
+    try {
+      const topFeatureNames = Object.entries(prediction.shap || {})
+        .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
+        .slice(0, 2)
+        .map(([name]) => name)
+        .join(" and ");
+      const query = `${prediction.direction} signal with ${topFeatureNames} drivers for SOL/USDC trading`;
+      retrievedContext = await searchContext(query);
+    } catch (err) {
+      console.log(`[QVAC RAG] Context retrieval failed: ${err.message}`);
+      retrievedContext = "";
+    }
+  }
 
+  const ragSection = retrievedContext
+    ? `\nRelevant knowledge:\n${retrievedContext}\n`
+    : "";
+
+  const prompt = `You are a quantitative trading analyst. Explain this AI trading signal concisely in 3-4 sentences.
+${ragSection}
 Signal: ${prediction.direction} with ${(prediction.confidence * 100).toFixed(1)}% confidence
 Top SHAP feature drivers:
 ${topFeatures}
