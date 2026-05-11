@@ -1,0 +1,23 @@
+SOL/USDC Trading Rules and Risk Management
+
+Position Sizing:
+- Maximum position size is 5% of portfolio (500 basis points)
+- Scale position size with confidence: below 60% confidence use 2%, above 75% use 4%
+- Never exceed max position regardless of confidence
+
+Risk Limits:
+- Maximum daily loss: 3% of portfolio (300 basis points)
+- Maximum drawdown from peak: 10% (1000 basis points)
+- Circuit breaker: halt trading if daily loss exceeds 2.5%
+
+Entry Conditions:
+- Minimum confidence threshold: 55%
+- RSI must not be in extreme territory (below 20 or above 80) for new positions
+- MACD should confirm the direction of the prediction
+- Volume should be at least 0.8x average for signal validity
+
+Exit Rules:
+- Take profit at 3-4% gain
+- Stop loss at 2% loss
+- Trailing stop: move stop to breakeven after 1.5% profit
+- Time-based exit: close positions open longer than 4 hours

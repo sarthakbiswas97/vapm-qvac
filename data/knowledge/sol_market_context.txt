@@ -1,0 +1,25 @@
+SOL/USDC Market Context (May 2026)
+
+Current Market:
+- SOL trading around $85-100 range
+- Market in consolidation phase after previous rally
+- DeFi TVL on Solana exceeding $15B
+- Jupiter aggregator processing $2B+ daily volume
+
+Key Technical Levels:
+- Strong support at $85-87 zone
+- Resistance at $98-100 psychological level
+- 200-day moving average around $92
+- Volume profile shows high activity node at $90-95
+
+Volatility Environment:
+- 30-day realized volatility around 45-55%
+- Implied volatility slightly elevated
+- Funding rates neutral to slightly positive
+- Open interest growing steadily
+
+Macro Context:
+- Solana ecosystem growth driven by DePIN and AI narratives
+- Institutional interest increasing via ETF speculation
+- Network upgrades improving transaction throughput
+- Cross-chain activity increasing via bridges and dWallets

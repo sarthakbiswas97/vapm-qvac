@@ -1,0 +1,33 @@
+SHAP Feature Interpretation Guide
+
+How to interpret SHAP values for SOL/USDC trading:
+
+RSI (Relative Strength Index):
+- Positive SHAP = RSI pushes prediction toward UP (often means oversold conditions)
+- Negative SHAP = RSI pushes toward DOWN (often means overbought)
+- Large magnitude = RSI is a dominant signal in this prediction
+
+MACD (Moving Average Convergence Divergence):
+- Positive SHAP = bullish crossover or histogram expansion
+- Negative SHAP = bearish crossover or histogram contraction
+- MACD signal line crossovers are the strongest signals
+
+Bollinger Position:
+- Positive SHAP = price near lower band (potential bounce)
+- Negative SHAP = price near upper band (potential reversal)
+- Position outside bands indicates extreme conditions
+
+Volume Spike:
+- Positive SHAP = elevated volume supporting the move
+- Negative SHAP = low volume suggesting weak conviction
+- Volume > 1.5x average with matching direction is strong confirmation
+
+Momentum:
+- Positive SHAP = accelerating price in predicted direction
+- Negative SHAP = decelerating or contrary momentum
+- Momentum divergences from price are important warnings
+
+Volatility:
+- Positive SHAP = volatility favoring the predicted direction
+- Negative SHAP = volatility suggesting caution
+- High volatility with low confidence = reduce position size
