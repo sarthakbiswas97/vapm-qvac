@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 
 const ML_API = "http://localhost:8001";
 const QVAC_API = "http://localhost:8002";
@@ -151,12 +151,14 @@ function StreamingText({
   color,
   demoText,
   isDemo,
+  ragEnhanced,
 }: {
   text: string;
   label: string;
   color: string;
   demoText?: string;
   isDemo?: boolean;
+  ragEnhanced?: boolean;
 }) {
   const colorClasses: Record<string, string> = {
     amber: "border-amber-500/20 bg-amber-500/5",
@@ -176,6 +178,11 @@ function StreamingText({
           <span className="text-[10px] bg-gray-700/60 text-gray-400 px-1.5 py-0.5 rounded">Demo</span>
         ) : (
           <span className="text-[10px] text-gray-600">QVAC Local LLM</span>
+        )}
+        {ragEnhanced && !showDemo && (
+          <span className="text-[10px] bg-violet-500/15 text-violet-400 px-1.5 py-0.5 rounded ring-1 ring-violet-500/30">
+            RAG-enhanced
+          </span>
         )}
       </div>
       <p className={`text-sm leading-relaxed whitespace-pre-wrap ${showDemo ? "text-gray-400" : "text-gray-200"}`}>
@@ -217,6 +224,101 @@ function ArchitectureSection() {
   );
 }
 
+function ListenButton({ text }: { text: string }) {
+  const [ttsState, setTtsState] = useState<"idle" | "loading" | "playing">("idle");
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handleListen = async () => {
+    if (ttsState !== "idle") return;
+
+    setTtsState("loading");
+    try {
+      const res = await fetch(`${QVAC_API}/api/speak`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+
+      if (!res.ok) {
+        throw new Error(`TTS request failed: ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        setTtsState("idle");
+        URL.revokeObjectURL(url);
+        audioRef.current = null;
+      };
+
+      audio.onerror = () => {
+        setTtsState("idle");
+        URL.revokeObjectURL(url);
+        audioRef.current = null;
+      };
+
+      setTtsState("playing");
+      await audio.play();
+    } catch (err) {
+      console.error("TTS error:", err);
+      setTtsState("idle");
+    }
+  };
+
+  const handleStop = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    setTtsState("idle");
+  };
+
+  if (!text || text.length === 0) return null;
+
+  return (
+    <button
+      onClick={ttsState === "playing" ? handleStop : handleListen}
+      disabled={ttsState === "loading"}
+      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+        ttsState === "loading"
+          ? "bg-gray-700 text-gray-400 cursor-wait"
+          : ttsState === "playing"
+          ? "bg-red-500/20 text-red-400 ring-1 ring-red-500/30 hover:bg-red-500/30"
+          : "bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30 hover:bg-amber-500/25"
+      }`}
+      title={ttsState === "playing" ? "Stop playback" : "Listen to reasoning (TTS)"}
+    >
+      {ttsState === "loading" ? (
+        <>
+          <svg className="animate-spin h-3.5 w-3.5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Speaking...
+        </>
+      ) : ttsState === "playing" ? (
+        <>
+          <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+            <rect x="6" y="4" width="4" height="16" />
+            <rect x="14" y="4" width="4" height="16" />
+          </svg>
+          Stop
+        </>
+      ) : (
+        <>
+          <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+          </svg>
+          Listen
+        </>
+      )}
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Main Dashboard
 // ---------------------------------------------------------------------------
@@ -230,6 +332,7 @@ export default function Dashboard() {
   const [connected, setConnected] = useState(false);
   const [qvacReady, setQvacReady] = useState(false);
   const [loadingPercent, setLoadingPercent] = useState<number | null>(null);
+  const [ragEnhanced, setRagEnhanced] = useState(false);
 
   const isDemo = !qvacReady && loadingPercent == null;
 
@@ -281,6 +384,7 @@ export default function Dashboard() {
     setReasoning("");
     setRiskResult("");
     setAnalysis("");
+    setRagEnhanced(false);
     await fetchPrediction();
 
     if (qvacReady) {
@@ -292,6 +396,7 @@ export default function Dashboard() {
         const data = await res.json();
 
         setPrediction(data.prediction || prediction);
+        setRagEnhanced(data.ragEnhanced === true);
         setReasoning("");
         await streamText(data.reasoning || "No reasoning generated.", setReasoning);
         const riskText = data.riskAssessment
@@ -419,7 +524,8 @@ export default function Dashboard() {
           QVAC Local LLM Output {isDemo && <span className="text-gray-500 normal-case">(on-device inference when QVAC server is running)</span>}
         </h2>
 
-        <StreamingText text={reasoning} label="Trade Reasoning" color="amber" demoText={DEMO_REASONING} isDemo={isDemo} />
+        <StreamingText text={reasoning} label="Trade Reasoning" color="amber" demoText={DEMO_REASONING} isDemo={isDemo} ragEnhanced={ragEnhanced} />
+        {reasoning && !running && <div className="flex justify-end -mt-2"><ListenButton text={reasoning} /></div>}
         <StreamingText
           text={riskResult}
           label="Risk Assessment"
