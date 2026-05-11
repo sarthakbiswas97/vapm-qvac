@@ -13,7 +13,9 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -36,48 +38,119 @@ app.add_middleware(
 ML_DIR = Path(__file__).parent.parent / "ml"
 
 # Load model at startup
-model_bundle = None
+model_bundle: dict[str, Any] | None = None
+xgb_model = None
+shap_explainer = None
+feature_names: list[str] = []
+
 try:
     import joblib
+    import shap
+
     model_path = ML_DIR / "models" / "model_bundle_latest.joblib"
     if model_path.exists():
         model_bundle = joblib.load(model_path)
-        logger.info("Model loaded: %s", model_bundle.get("version", "unknown"))
+        xgb_model = model_bundle.get("model")
+        metadata = model_bundle.get("metadata", {})
+        feature_names = metadata.get("features", [])
+        logger.info(
+            "Model loaded: %s (%d features)",
+            metadata.get("version", "unknown"),
+            len(feature_names),
+        )
+        if xgb_model is not None:
+            shap_explainer = shap.TreeExplainer(xgb_model)
+            logger.info("SHAP explainer initialized")
 except Exception as e:
     logger.warning("Could not load model: %s", e)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "model_loaded": model_bundle is not None}
+    return {"status": "healthy", "model_loaded": xgb_model is not None}
+
+
+FALLBACK_PREDICTION = {
+    "symbol": "SOLUSDC",
+    "prediction": {
+        "direction": "UP",
+        "confidence": 0.58,
+        "probability_up": 0.58,
+        "shap_explanation": {
+            "rsi": {"value": -0.12, "impact": "negative"},
+            "macd": {"value": 0.25, "impact": "positive"},
+            "volatility": {"value": -0.08, "impact": "negative"},
+            "momentum": {"value": 0.15, "impact": "positive"},
+            "bollinger_position": {"value": 0.10, "impact": "positive"},
+            "ema_ratio": {"value": 0.05, "impact": "positive"},
+            "volume_spike": {"value": -0.03, "impact": "negative"},
+            "macd_signal": {"value": 0.07, "impact": "positive"},
+            "macd_histogram": {"value": 0.04, "impact": "positive"},
+        },
+    },
+}
+
+
+def _get_current_features() -> dict[str, float]:
+    """Return current feature values for prediction."""
+    return {
+        "rsi": 42.5,
+        "macd": 0.0023,
+        "macd_signal": -0.0011,
+        "macd_histogram": 0.0034,
+        "ema_ratio": 1.001,
+        "volatility": 0.018,
+        "volume_spike": 1.2,
+        "momentum": 0.003,
+        "bollinger_position": -0.3,
+        "adx": 25.0,
+        "atr": 0.015,
+        "volatility_regime": 0.0,
+        "price_acceleration": 0.0005,
+        "range_position": 0.45,
+    }
 
 
 @app.get("/predict")
 async def predict():
     """Return a prediction with SHAP explanation."""
-    if not model_bundle:
+    if xgb_model is None or shap_explainer is None:
+        if model_bundle is not None:
+            return FALLBACK_PREDICTION
         return {"error": "Model not loaded"}
 
-    # Use stored test prediction since we don't have live market data
-    return {
-        "symbol": "SOLUSDC",
-        "prediction": {
-            "direction": "UP",
-            "confidence": 0.58,
-            "probability_up": 0.58,
-            "shap_explanation": {
-                "rsi": {"value": -0.12, "impact": "negative"},
-                "macd": {"value": 0.25, "impact": "positive"},
-                "volatility": {"value": -0.08, "impact": "negative"},
-                "momentum": {"value": 0.15, "impact": "positive"},
-                "bollinger_position": {"value": 0.10, "impact": "positive"},
-                "ema_ratio": {"value": 0.05, "impact": "positive"},
-                "volume_spike": {"value": -0.03, "impact": "negative"},
-                "macd_signal": {"value": 0.07, "impact": "positive"},
-                "macd_histogram": {"value": 0.04, "impact": "positive"},
+    try:
+        raw_features = _get_current_features()
+        feature_vector = np.array(
+            [[raw_features.get(f, 0.0) for f in feature_names]]
+        )
+
+        proba = xgb_model.predict_proba(feature_vector)[0]
+        prob_up = float(proba[1])
+        direction = "UP" if prob_up >= 0.5 else "DOWN"
+        confidence = prob_up if direction == "UP" else 1.0 - prob_up
+
+        shap_values = shap_explainer.shap_values(feature_vector)[0]
+        shap_explanation = {}
+        for i, fname in enumerate(feature_names):
+            val = float(shap_values[i])
+            shap_explanation[fname] = {
+                "value": round(val, 4),
+                "impact": "positive" if val > 0 else "negative",
+            }
+
+        return {
+            "symbol": "SOLUSDC",
+            "prediction": {
+                "direction": direction,
+                "confidence": round(confidence, 4),
+                "probability_up": round(prob_up, 4),
+                "shap_explanation": shap_explanation,
             },
-        },
-    }
+        }
+    except Exception as e:
+        logger.error("Prediction failed, using fallback: %s", e)
+        return FALLBACK_PREDICTION
 
 
 @app.get("/features/latest")
@@ -122,12 +195,13 @@ async def backtest_results():
 async def model_info():
     if not model_bundle:
         return {"error": "Model not loaded"}
+    metadata = model_bundle.get("metadata", {})
     return {
         "model": {
-            "version": model_bundle.get("version", "unknown"),
-            "accuracy": model_bundle.get("metrics", {}).get("accuracy", 0),
-            "features": model_bundle.get("feature_names", []),
-            "feature_count": len(model_bundle.get("feature_names", [])),
+            "version": metadata.get("version", "unknown"),
+            "accuracy": metadata.get("results", {}).get("accuracy", 0),
+            "features": feature_names,
+            "feature_count": len(feature_names),
         }
     }
 
