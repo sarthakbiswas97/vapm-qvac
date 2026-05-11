@@ -16,7 +16,7 @@
  */
 
 import { createServer } from "node:http";
-import { initQVAC, generateTradeReasoning, analyzeMarket, assessRisk, shutdown } from "./qvac-reasoner.js";
+import { initQVAC, generateTradeReasoning, analyzeMarket, assessRisk, shutdown, getLoadingProgress } from "./qvac-reasoner.js";
 
 const PORT = parseInt(process.env.QVAC_PORT || "8002", 10);
 const ML_SERVICE = process.env.ML_SERVICE_URL || "http://localhost:8001";
@@ -41,7 +41,11 @@ async function readBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   const raw = Buffer.concat(chunks).toString();
-  return raw ? JSON.parse(raw) : {};
+  try {
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    throw new Error("Invalid JSON in request body");
+  }
 }
 
 async function fetchFromML(path) {
@@ -142,7 +146,7 @@ const server = createServer(async (req, res) => {
 
   try {
     if (url.pathname === "/health" && req.method === "GET") {
-      return jsonResponse(res, 200, { status: "ok", model_ready: modelReady });
+      return jsonResponse(res, 200, { status: "ok", model_ready: modelReady, loading_percent: getLoadingProgress() });
     }
     if (url.pathname === "/api/cycle" && req.method === "POST") {
       return await handleCycle(req, res);

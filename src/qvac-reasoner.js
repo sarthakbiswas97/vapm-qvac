@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 
 let modelId = null;
+let loadingPercent = null;
 
 // Check for locally downloaded model first (faster than P2P registry)
 const LOCAL_MODEL_PATH = join(homedir(), ".qvac", "models", "Llama-3.2-1B-Instruct-Q4_0.gguf");
@@ -31,17 +32,22 @@ export async function initQVAC() {
   const modelSrc = useLocal ? `file://${LOCAL_MODEL_PATH}` : LLAMA_3_2_1B_INST_Q4_0;
 
   console.log(`[QVAC] Loading Llama 3.2 1B ${useLocal ? "from local file" : "from registry (downloads ~700MB)"}...`);
+  loadingPercent = 0;
 
   modelId = await loadModel({
     modelSrc,
     modelType: "llamacpp-completion",
     onProgress: (progress) => {
+      if (progress.percent != null) {
+        loadingPercent = progress.percent;
+      }
       if (progress.percent && progress.percent % 20 === 0) {
         console.log(`[QVAC] Loading: ${progress.percent}%`);
       }
     },
   });
 
+  loadingPercent = null;
   console.log("[QVAC] Model loaded. All inference runs locally.");
   return modelId;
 }
@@ -166,6 +172,14 @@ Does this trade violate any limits? Is the confidence level sufficient?`;
   const approved = response.toUpperCase().startsWith("YES");
 
   return { approved, reasoning: response.trim() };
+}
+
+/**
+ * Get the current model loading progress.
+ * @returns {number | null} 0-100 during loading, null when not loading
+ */
+export function getLoadingProgress() {
+  return loadingPercent;
 }
 
 /**
