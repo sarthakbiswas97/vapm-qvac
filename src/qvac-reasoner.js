@@ -11,21 +11,30 @@
  */
 
 import { loadModel, LLAMA_3_2_1B_INST_Q4_0, completion, unloadModel } from "@qvac/sdk";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 
 let modelId = null;
 
+// Check for locally downloaded model first (faster than P2P registry)
+const LOCAL_MODEL_PATH = join(homedir(), ".qvac", "models", "Llama-3.2-1B-Instruct-Q4_0.gguf");
+
 /**
  * Initialize the local LLM model.
- * Downloads and loads the model on first run (~700MB).
+ * Tries local file first, falls back to QVAC registry download.
  */
 export async function initQVAC() {
   if (modelId) return modelId;
 
-  console.log("[QVAC] Loading Llama 3.2 1B locally (first run downloads ~700MB)...");
+  const useLocal = existsSync(LOCAL_MODEL_PATH);
+  const modelSrc = useLocal ? `file://${LOCAL_MODEL_PATH}` : LLAMA_3_2_1B_INST_Q4_0;
+
+  console.log(`[QVAC] Loading Llama 3.2 1B ${useLocal ? "from local file" : "from registry (downloads ~700MB)"}...`);
 
   modelId = await loadModel({
-    modelSrc: LLAMA_3_2_1B_INST_Q4_0,
-    modelType: "llm",
+    modelSrc,
+    modelType: "llamacpp-completion",
     onProgress: (progress) => {
       if (progress.percent && progress.percent % 20 === 0) {
         console.log(`[QVAC] Loading: ${progress.percent}%`);

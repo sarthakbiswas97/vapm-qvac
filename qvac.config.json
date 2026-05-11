@@ -1,0 +1,5 @@
+{
+  "cacheDirectory": "/Users/sarthakbiswas/.qvac/models",
+  "registryStreamTimeoutMs": 300000,
+  "loggerLevel": "info"
+}
