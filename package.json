@@ -5,6 +5,7 @@
   "description": "Sovereign AI Trading Agent - local inference with QVAC, no cloud dependency",
   "scripts": {
     "start": "node src/agent.js",
+    "serve": "node src/server.js",
     "reason": "node src/qvac-reasoner.js"
   },
   "dependencies": {

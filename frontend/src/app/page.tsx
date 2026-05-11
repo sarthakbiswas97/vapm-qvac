@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 
-const API = "http://localhost:8001";
+const ML_API = "http://localhost:8001";
+const QVAC_API = "http://localhost:8002";
 
 interface Prediction {
   direction: string;
@@ -106,10 +107,11 @@ export default function Dashboard() {
   const [analysis, setAnalysis] = useState("");
   const [running, setRunning] = useState(false);
   const [connected, setConnected] = useState(false);
+  const [qvacReady, setQvacReady] = useState(false);
 
   const fetchPrediction = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/predict`);
+      const res = await fetch(`${ML_API}/predict`);
       if (res.ok) {
         const data = await res.json();
         setPrediction(data.prediction);
@@ -120,43 +122,72 @@ export default function Dashboard() {
     }
   }, []);
 
+  const checkQvac = useCallback(async () => {
+    try {
+      const res = await fetch(`${QVAC_API}/health`);
+      if (res.ok) {
+        const data = await res.json();
+        setQvacReady(data.model_ready === true);
+      }
+    } catch {
+      setQvacReady(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchPrediction();
+    checkQvac();
     const id = setInterval(fetchPrediction, 10000);
-    return () => clearInterval(id);
-  }, [fetchPrediction]);
+    const qid = setInterval(checkQvac, 5000);
+    return () => { clearInterval(id); clearInterval(qid); };
+  }, [fetchPrediction, checkQvac]);
+
+  const streamText = async (text: string, setter: (v: string) => void) => {
+    for (let i = 0; i < text.length; i += 3) {
+      setter(text.slice(0, i + 3));
+      await new Promise(r => setTimeout(r, 12));
+    }
+    setter(text);
+  };
 
   const runAgent = async () => {
     setRunning(true);
     setReasoning("");
     setRiskResult("");
     setAnalysis("");
-
-    // Simulate QVAC streaming (in production this calls the Node.js agent)
     await fetchPrediction();
 
-    // Simulate trade reasoning stream
-    const reasoningText = prediction
-      ? `The model signals ${prediction.direction} with ${(prediction.confidence * 100).toFixed(1)}% confidence. Key drivers: MACD showing bullish crossover (+0.25 SHAP), momentum is positive (+0.15), while RSI at 42.5 suggests the asset is neither overbought nor oversold. Volatility is moderate at 1.8%, supporting a controlled entry. The risk-reward profile favors this trade given current market conditions.`
-      : "Awaiting prediction data from ML service...";
+    if (qvacReady) {
+      // Real QVAC inference via local LLM server
+      try {
+        setReasoning("Running QVAC local LLM inference...");
+        const res = await fetch(`${QVAC_API}/api/cycle`, { method: "POST" });
+        if (!res.ok) throw new Error(`QVAC server error: ${res.status}`);
+        const data = await res.json();
 
-    for (let i = 0; i < reasoningText.length; i += 3) {
-      setReasoning(reasoningText.slice(0, i + 3));
-      await new Promise(r => setTimeout(r, 15));
-    }
+        setPrediction(data.prediction || prediction);
+        setReasoning("");
+        await streamText(data.reasoning || "No reasoning generated.", setReasoning);
+        const riskText = data.riskAssessment
+          ? `${data.riskAssessment.approved ? "YES" : "NO"} -- ${data.riskAssessment.reasoning}`
+          : "No risk assessment.";
+        await streamText(riskText, setRiskResult);
+        await streamText(data.marketAnalysis || "No market analysis.", setAnalysis);
+      } catch (err) {
+        setReasoning(`QVAC server error: ${err instanceof Error ? err.message : "unknown"}. Start server: node src/server.js`);
+      }
+    } else {
+      // Demo mode: show real prediction data with pre-computed reasoning
+      const reasoningText = prediction
+        ? `[Demo mode -- start QVAC server for real LLM inference: node src/server.js]\n\nThe model signals ${prediction.direction} with ${(prediction.confidence * 100).toFixed(1)}% confidence. SHAP analysis shows the top feature drivers for this prediction. The risk-reward profile is evaluated against position limits, daily loss caps, and drawdown thresholds before any trade execution.`
+        : "Awaiting prediction data from ML service...";
+      await streamText(reasoningText, setReasoning);
 
-    // Simulate risk assessment stream
-    const riskText = "YES -- Trade approved. Position size of 300 bps is within the 500 bps maximum. Daily PnL of -0.50% is well below the 3% daily loss limit. Current drawdown of 1.2% is minimal against the 10% cap. Confidence level of 58% meets the minimum threshold. All risk parameters are within safe bounds.";
-    for (let i = 0; i < riskText.length; i += 3) {
-      setRiskResult(riskText.slice(0, i + 3));
-      await new Promise(r => setTimeout(r, 15));
-    }
+      const riskText = "[Demo mode] YES -- Trade approved. Position size within configured limits. Daily PnL and drawdown within safe bounds.";
+      await streamText(riskText, setRiskResult);
 
-    // Simulate market analysis stream
-    const analysisText = "The market shows a mildly bullish setup. RSI at 42.5 indicates neutral-to-oversold conditions with room for upward movement. MACD has crossed above its signal line, confirming short-term bullish momentum. Bollinger position at -0.3 suggests price is in the lower half of its range, offering favorable entry. Volume is slightly elevated at 1.2x average, supporting the move. This is a moderate-confidence environment for a long position.";
-    for (let i = 0; i < analysisText.length; i += 3) {
-      setAnalysis(analysisText.slice(0, i + 3));
-      await new Promise(r => setTimeout(r, 15));
+      const analysisText = "[Demo mode] Market conditions evaluated using RSI, MACD, Bollinger Bands, momentum, and volume indicators. Full analysis requires QVAC local LLM server.";
+      await streamText(analysisText, setAnalysis);
     }
 
     setRunning(false);
@@ -178,8 +209,11 @@ export default function Dashboard() {
               <StatusDot active={connected} />
               {connected ? "ML Service Connected" : "Disconnected"}
             </span>
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-amber-500/15 text-amber-400 ring-1 ring-amber-500/30">
-              QVAC Local AI
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ring-1 ${
+              qvacReady ? "bg-amber-500/15 text-amber-400 ring-amber-500/30" : "bg-gray-700/50 text-gray-400 ring-gray-600/30"
+            }`}>
+              <StatusDot active={qvacReady} />
+              {qvacReady ? "QVAC LLM Ready" : "QVAC Demo Mode"}
             </span>
           </div>
         </div>
@@ -204,7 +238,7 @@ export default function Dashboard() {
               : "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 ring-1 ring-amber-500/40 hover:ring-amber-400"
           }`}
         >
-          {running ? "Agent Running..." : "Run Agent Cycle (Local AI)"}
+          {running ? "Agent Running..." : qvacReady ? "Run Agent Cycle (Live QVAC)" : "Run Agent Cycle (Demo Mode)"}
         </button>
       </div>
 
@@ -273,10 +307,15 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Disconnected warning */}
+      {/* Status warnings */}
       {!connected && (
         <div className="fixed bottom-4 right-4 bg-red-500/90 text-white text-xs px-3 py-2 rounded-lg">
-          Backend disconnected -- run: cd backend && python main.py
+          ML backend disconnected -- run: cd backend && python main.py
+        </div>
+      )}
+      {connected && !qvacReady && (
+        <div className="fixed bottom-4 left-4 bg-amber-600/90 text-white text-xs px-3 py-2 rounded-lg">
+          QVAC in demo mode -- for real LLM: node src/server.js
         </div>
       )}
     </main>
